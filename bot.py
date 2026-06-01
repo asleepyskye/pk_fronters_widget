@@ -60,6 +60,7 @@ def link(discord_id: int):
         (discord_id, now, now, ""),
     )
     _db.commit()
+    _system_cache.pop(discord_id, None)
 
 
 def is_linked(discord_id: int):
@@ -102,6 +103,13 @@ class Fronter:
     avatar_url: Optional[str]
 
 @dataclass
+class SystemInfo:
+    name: Optional[str]
+    id: Optional[str]
+    pronouns: Optional[str]
+    avatar_url: Optional[str]
+
+@dataclass
 class FrontStatus:
     system_name: Optional[str]
     system_id: Optional[str]
@@ -109,9 +117,27 @@ class FrontStatus:
     system_avatar_url: Optional[str]
     fronters: list[Fronter]
 
+SYSTEM_CACHE_TTL = timedelta(hours=1)
+_system_cache: dict[int, tuple[datetime, SystemInfo]] = {}
+
+async def get_system_cached(discord_id: int) -> SystemInfo:
+    now = datetime.now(timezone.utc)
+    cached = _system_cache.get(discord_id)
+    if cached and now - cached[0] < SYSTEM_CACHE_TTL:
+        return cached[1]
+    system = await _pk.get_system(discord_id)
+    info = SystemInfo(
+        name=system.name,
+        id=system.id.id.replace("-", ""),
+        pronouns=system.pronouns,
+        avatar_url=system.avatar_url,
+    )
+    _system_cache[discord_id] = (now, info)
+    return info
+
 async def fetch_front(discord_id: int) -> FrontStatus:
     try:
-        system = await _pk.get_system(discord_id)
+        system = await get_system_cached(discord_id)
         members = [m async for m in _pk.get_fronters(discord_id)]
     except SystemNotFound:
         raise PluralKitError(
@@ -139,7 +165,7 @@ async def fetch_front(discord_id: int) -> FrontStatus:
     ]
     return FrontStatus(
         system_name=system.name,
-        system_id=system.id.id.replace("-", ""),
+        system_id=system.id,
         system_pronouns=system.pronouns,
         system_avatar_url=system.avatar_url,
         fronters=fronters,
