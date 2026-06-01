@@ -46,7 +46,7 @@ class WidgetError(RuntimeError):
     pass
 
 #database stuffs
-DB_PATH = Path(__file__).with_name("pk_fronters_widget.db")
+DB_PATH = Path(os.environ.get("DB_PATH") or Path(__file__).with_name("pk_fronters_widget.db"))
 _db = sqlite3.connect(DB_PATH, check_same_thread=False)
 _db.execute(
     "create table if not exists links (user_id integer primary key, linked_at text not null, last_update text, last_fronts text)"
