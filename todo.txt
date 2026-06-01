@@ -1,0 +1,8 @@
+yeah. this is a mess :3
+
+- should make it cache system name/pronouns so we make less API calls
+- really should just use webhooks to get front updates
+- ratelimits are gonna be hit reallllyyyyy quick if more than.. 5 or 6 people use this? so uh. figure that out
+- ideally i'd also like it to check/update more often
+
+- plz someone remind me to setup some sort of error monitoring software :p
