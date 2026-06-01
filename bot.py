@@ -222,9 +222,8 @@ def build_data(status: FrontStatus) -> list[dict]:
 
 
 async def push_profile(discord_user_id: int, status: FrontStatus) -> None:
-    primary = status.fronters[0] if status.fronters else None
     payload = {
-        "username": primary.name if primary else (status.system_name or "Widget"),
+        "username": status.system_id,
         "data": {"dynamic": build_data(status)},
     }
     url = (
