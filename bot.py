@@ -186,7 +186,9 @@ def _string(name: str, value: Optional[str]) -> dict:
     return {"type": WIDGET_T_STRING, "name": name, "value": value or ""}
 
 def _media(name: str, url: Optional[str]) -> Optional[dict]:
-    return {"type": WIDGET_T_MEDIA, "name": name, "value": {"url": url or ""}}
+    if not url:
+        return None
+    return {"type": WIDGET_T_MEDIA, "name": name, "value": {"url": url}}
 
 
 def build_data(status: FrontStatus) -> list[dict]:
