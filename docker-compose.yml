@@ -5,6 +5,19 @@ services:
     env_file: .env
     volumes:
       - widget-data:/app/data
+    ports:
+      - "8000:8000"
+
+  vector:
+    image: timberio/vector:0.42.0-debian
+    restart: unless-stopped
+    depends_on:
+      - bot
+    environment:
+      - VICTORIALOGS_URL=${VICTORIALOGS_URL:-http://victorialogs:9428}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./vector.yaml:/etc/vector/vector.yaml:ro
 
 volumes:
   widget-data:

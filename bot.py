@@ -14,6 +14,8 @@ from dotenv import load_dotenv
 import sqlite3
 from pluralkit import Client as PKClient, PluralKitException, SystemNotFound
 from discord.ext import tasks
+import sentry_sdk
+from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
 #yes. this is just one python file. im lazy :p
 
@@ -50,6 +52,21 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 log = logging.getLogger("pk_fronters_widget")
+
+SENTRY_DSN = os.environ.get("SENTRY_DSN")
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        environment=os.environ.get("SENTRY_ENVIRONMENT", "production"),
+        traces_sample_rate=float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0") or 0),
+    )
+
+POLL_CYCLES = Counter("pkwidget_poll_cycles_total", "background poll cycles run")
+PUSHES = Counter("pkwidget_pushes_total", "sucessful profile widget pushes")
+FRONTS_UNCHANGED = Counter("pkwidget_fronts_unchanged_total", "polls with unchanged front")
+ERRORS = Counter("pkwidget_errors_total", "errors while updating a widget", ["type"])
+LINKED_USERS = Gauge("pkwidget_linked_users", "number of linked users in the database")
+UPDATE_SECONDS = Histogram("pkwidget_update_seconds", "time to fetch + push")
 
 class PluralKitError(RuntimeError):
     pass
@@ -119,6 +136,9 @@ def touch_update(discord_id: int):
         (now, discord_id),
     )
     _db.commit()
+
+def count_users() -> int:
+    return _db.execute("select count(*) from links").fetchone()[0]
 
 def get_due_users(stale_after_seconds: int, limit: int) -> list[tuple[int, str]]:
     cutoff = (datetime.now(timezone.utc) - timedelta(seconds=stale_after_seconds)).isoformat()
@@ -298,24 +318,35 @@ LIMIT = _env_int("LIMIT", 5)
 
 @tasks.loop(seconds=POLL_INTERVAL)
 async def poll_fronts() -> None:
+    POLL_CYCLES.inc()
+    LINKED_USERS.set(count_users())
     for user_id, last_fronts in get_due_users(STALE_AFTER, LIMIT):
         try:
-            status = await fetch_front(user_id)
+            with UPDATE_SECONDS.time():
+                status = await fetch_front(user_id)
 
-            fronts = fronts_string(status)
-            if fronts == last_fronts:
-                touch_update(user_id)
-                continue
+                fronts = fronts_string(status)
+                if fronts == last_fronts:
+                    touch_update(user_id)
+                    FRONTS_UNCHANGED.inc()
+                    continue
 
-            log.info(f"updating widget for user {user_id}")
-            await push_profile(user_id, status)
-            mark_update(user_id, fronts)
-        except (PluralKitError, WidgetError) as e:
+                log.info(f"updating widget for user {user_id}")
+                await push_profile(user_id, status)
+                mark_update(user_id, fronts)
+                PUSHES.inc()
+        except PluralKitError as e:
             log.error(e)
             touch_update(user_id)
+            ERRORS.labels("pluralkit").inc()
+        except WidgetError as e:
+            log.error(e)
+            touch_update(user_id)
+            ERRORS.labels("widget").inc()
         except Exception:
             log.exception(f"unexpected error updating user {user_id}")
             touch_update(user_id)
+            ERRORS.labels("unexpected").inc()
 
 @poll_fronts.before_loop
 async def _before_poll_fronts() -> None:
@@ -388,11 +419,17 @@ async def refresh(interaction: discord.Interaction):
         return
 
     mark_update(interaction.user.id, fronts_string(status))
+    PUSHES.inc()
     await interaction.followup.send("refreshed!", ephemeral=True)
 
 _bot = WidgetBot()
 
+METRICS_PORT = _env_int("METRICS_PORT", 8000)
+
 def main() -> None:
+    if METRICS_PORT:
+        start_http_server(METRICS_PORT)
+        log.info(f"metrics started on :{METRICS_PORT}/metrics")
     _bot.run(DISCORD_TOKEN, log_handler=None)
 
 if __name__ == "__main__":

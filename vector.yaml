@@ -1,0 +1,29 @@
+sources:
+  bot_logs:
+    type: docker_logs
+    include_labels:
+      - "com.docker.compose.service=bot"
+
+transforms:
+  parsed:
+    type: remap
+    inputs:
+      - bot_logs
+    source: |
+      .container = .container_name
+
+sinks:
+  victorialogs:
+    type: elasticsearch
+    inputs:
+      - parsed
+    endpoints:
+      - "${VICTORIALOGS_URL:-http://victorialogs:9428}/insert/elasticsearch/"
+    mode: bulk
+    api_version: v8
+    healthcheck:
+      enabled: false
+    query:
+      _msg_field: message
+      _time_field: timestamp
+      _stream_fields: container,host
