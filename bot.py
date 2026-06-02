@@ -27,6 +27,15 @@ def _require(name: str) -> str:
         )
     return value
 
+def _env_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if not value:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        raise RuntimeError(f"environment variable {name!r} must be an integer, got {value!r}")
+
 
 DISCORD_TOKEN = _require("DISCORD_TOKEN")
 APPLICATION_ID = _require("DISCORD_APPLICATION_ID")
@@ -283,9 +292,9 @@ async def push_profile(discord_user_id: int, status: FrontStatus) -> None:
                 raise WidgetError(f"discord API error {resp.status}")
             
 #background polling
-POLL_INTERVAL = 10
-STALE_AFTER = 30
-LIMIT = 5
+POLL_INTERVAL = _env_int("POLL_INTERVAL", 10)
+STALE_AFTER = _env_int("STALE_AFTER", 30)
+LIMIT = _env_int("LIMIT", 5)
 
 @tasks.loop(seconds=POLL_INTERVAL)
 async def poll_fronts() -> None:
