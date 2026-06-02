@@ -261,8 +261,8 @@ def build_data(status: FrontStatus) -> list[dict]:
             continue
 
         fronter = status.fronters[slot - 1] if slot <= len(status.fronters) else None
-        data.append(_string(f"fronter{slot}_name", _trunc(_clean(fronter.name)) if fronter else None))
-        data.append(_string(f"fronter{slot}_field", _trunc(_clean(fronter.pronouns)) if fronter else None))
+        data.append(_string(f"fronter{slot}_name", _clean(fronter.name) if fronter else None))
+        data.append(_string(f"fronter{slot}_field", _clean(fronter.pronouns) if fronter else None))
         if fronter and (img := _media(f"fronter{slot}_img", fronter.avatar_url or status.system_avatar_url)):
             data.append(img)
 
