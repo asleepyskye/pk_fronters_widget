@@ -67,10 +67,13 @@ FRONTS_UNCHANGED = Counter("pkwidget_fronts_unchanged_total", "polls with unchan
 ERRORS = Counter("pkwidget_errors_total", "errors while updating a widget", ["type"])
 LINKED_USERS = Gauge("pkwidget_linked_users", "number of linked users in the database")
 UPDATE_SECONDS = Histogram("pkwidget_update_seconds", "time to fetch + push")
+PRUNED = Counter("pkwidget_pruned_total", "users pruned")
 
 class PluralKitError(RuntimeError):
     pass
 class WidgetError(RuntimeError):
+    pass
+class IdentityGoneError(WidgetError):
     pass
 
 #database stuffs
@@ -116,6 +119,11 @@ def link(discord_id: int):
     _db.commit()
     _system_cache.pop(discord_id, None)
 
+
+def unlink(discord_id: int):
+    _db.execute("delete from links where user_id = ?", (discord_id,))
+    _db.commit()
+    _system_cache.pop(discord_id, None)
 
 def is_linked(discord_id: int):
     cur = _db.execute("select 1 from links where user_id = ?", (discord_id,))
@@ -307,6 +315,8 @@ async def push_profile(discord_user_id: int, status: FrontStatus) -> None:
     }
     async with aiohttp.ClientSession() as session:
         async with session.patch(url, json=payload, headers=headers) as resp:
+            if resp.status == 404:
+                raise IdentityGoneError(f"identity {identity_id} no longer exists")
             if resp.status >= 400:
                 log.error(await resp.text())
                 raise WidgetError(f"discord API error {resp.status}")
@@ -335,6 +345,10 @@ async def poll_fronts() -> None:
                 await push_profile(user_id, status)
                 mark_update(user_id, fronts)
                 PUSHES.inc()
+        except IdentityGoneError:
+            log.info(f"identity gone for user {user_id}, pruning")
+            unlink(user_id)
+            PRUNED.inc()
         except PluralKitError as e:
             log.error(e)
             touch_update(user_id)
@@ -414,6 +428,15 @@ async def refresh(interaction: discord.Interaction):
     try:
         status = await fetch_front(interaction.user.id)
         await push_profile(interaction.user.id, status)
+    except IdentityGoneError:
+        unlink(interaction.user.id)
+        PRUNED.inc()
+        await interaction.followup.send(
+            "it seems the app is no longer authorized? \n"
+            "re-run `/widget setup` and re-setup",
+            ephemeral=True,
+        )
+        return
     except (PluralKitError, WidgetError) as e:
         await interaction.followup.send(f"{e}", ephemeral=True)
         return
