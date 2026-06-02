@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import os
+import re
 import secrets
 from pathlib import Path
 import logging
@@ -209,6 +210,17 @@ WIDGET_T_MEDIA = 3
 #uhhh this is probably a bad idea. i dont think this'll change tho?
 MORE_URL = "https://cdn.discordapp.com/app-assets/1511072634232770621/1511108933371297873.png?size=1024"
 
+_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")
+
+def _clean(text: Optional[str]):
+    text = _LINK_RE.sub(r"\1", text or "")
+    return text
+
+def _trunc(text: Optional[str]):
+    if len(text) > 21:
+        text = text[:20] + "…"
+    return text
+
 def _string(name: str, value: Optional[str]) -> dict:
     return {"type": WIDGET_T_STRING, "name": name, "value": value or ""}
 
@@ -224,9 +236,9 @@ def build_data(status: FrontStatus) -> list[dict]:
         fronting_str = f"{len(status.fronters)} currently fronting"
     data: list[dict] = [
         _string("num_fronting_str", fronting_str),
-        _string("system_name", status.system_name),
+        _string("system_name", _clean(status.system_name)),
         _string("system_id", status.system_id),
-        _string("system_pronouns", status.system_pronouns),
+        _string("system_pronouns", _clean(status.system_pronouns)),
     ]
     if img := _media("system_img", status.system_avatar_url):
         data.append(img)
@@ -240,8 +252,8 @@ def build_data(status: FrontStatus) -> list[dict]:
             continue
 
         fronter = status.fronters[slot - 1] if slot <= len(status.fronters) else None
-        data.append(_string(f"fronter{slot}_name", fronter.name if fronter else None))
-        data.append(_string(f"fronter{slot}_field", fronter.pronouns if fronter else None))
+        data.append(_string(f"fronter{slot}_name", _trunc(_clean(fronter.name)) if fronter else None))
+        data.append(_string(f"fronter{slot}_field", _trunc(_clean(fronter.pronouns)) if fronter else None))
         if fronter and (img := _media(f"fronter{slot}_img", fronter.avatar_url or status.system_avatar_url)):
             data.append(img)
 
