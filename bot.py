@@ -360,6 +360,27 @@ async def setup(interaction: discord.Interaction):
         ephemeral=True,
     )
 
+@widget.command(name="refresh", description="force-refresh your widget")
+async def refresh(interaction: discord.Interaction):
+    if not is_linked(interaction.user.id):
+        await interaction.response.send_message(
+            "you haven't set up the widget yet, run `/widget setup` first.",
+            ephemeral=True,
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True)
+    _system_cache.pop(interaction.user.id, None)
+    try:
+        status = await fetch_front(interaction.user.id)
+        await push_profile(interaction.user.id, status)
+    except (PluralKitError, WidgetError) as e:
+        await interaction.followup.send(f"{e}", ephemeral=True)
+        return
+
+    mark_update(interaction.user.id, fronts_string(status))
+    await interaction.followup.send("refreshed!", ephemeral=True)
+
 _bot = WidgetBot()
 
 def main() -> None:
