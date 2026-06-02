@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import os
+import secrets
 from pathlib import Path
 import logging
 from typing import Optional
@@ -49,15 +50,41 @@ class WidgetError(RuntimeError):
 DB_PATH = Path(os.environ.get("DB_PATH") or Path(__file__).with_name("pk_fronters_widget.db"))
 _db = sqlite3.connect(DB_PATH, check_same_thread=False)
 _db.execute(
-    "create table if not exists links (user_id integer primary key, linked_at text not null, last_update text, last_fronts text)"
+    "create table if not exists links (user_id integer primary key, linked_at text not null, last_update text, last_fronts text, identity_id integer)"
 )
 _db.commit()
 
+def get_identity_id(discord_id: int) -> Optional[int]:
+    cur = _db.execute("select identity_id from links where user_id = ?", (discord_id,))
+    row = cur.fetchone()
+    return row[0] if row and row[0] is not None else None
+
+def generate_identity_id() -> int:
+    while True:
+        id = secrets.randbits(63)
+        if id and not _db.execute(
+            "select 1 from links where identity_id = ?", (id,)
+        ).fetchone():
+            return id
+
+def _migrate_identity_ids() -> None:
+    cols = [r[1] for r in _db.execute("pragma table_info(links)")]
+    if "identity_id" not in cols:
+        _db.execute("alter table links add column identity_id integer")
+        _db.commit()
+    for (uid,) in _db.execute("select user_id from links where identity_id is null").fetchall():
+        _db.execute("update links set identity_id = ? where user_id = ?", (generate_identity_id(), uid))
+    _db.execute("create unique index if not exists idx_links_identity on links(identity_id)")
+    _db.commit()
+
+_migrate_identity_ids()
+
 def link(discord_id: int):
     now = datetime.now(timezone.utc).isoformat()
+    identity_id = get_identity_id(discord_id) or generate_identity_id()
     _db.execute(
-        "insert or replace into links (user_id, linked_at, last_update, last_fronts) values (?, ?, ?, ?)",
-        (discord_id, now, now, ""),
+        "insert or replace into links (user_id, linked_at, last_update, last_fronts, identity_id) values (?, ?, ?, ?, ?)",
+        (discord_id, now, now, "", identity_id),
     )
     _db.commit()
     _system_cache.pop(discord_id, None)
@@ -222,13 +249,16 @@ def build_data(status: FrontStatus) -> list[dict]:
 
 
 async def push_profile(discord_user_id: int, status: FrontStatus) -> None:
+    identity_id = get_identity_id(discord_user_id)
+    if identity_id is None:
+        raise WidgetError("no identity id assigned to this user")
     payload = {
         "username": status.system_id,
         "data": {"dynamic": build_data(status)},
     }
     url = (
         f"{DISCORD_API}/applications/{APPLICATION_ID}"
-        f"/users/{discord_user_id}/identities/0/profile"
+        f"/users/{discord_user_id}/identities/{identity_id}/profile"
     )
     headers = {
         "Authorization": f"Bot {DISCORD_TOKEN}",
