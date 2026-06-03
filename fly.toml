@@ -1,0 +1,27 @@
+app = 'pk-fronters-widget'
+primary_region = 'sjc'
+
+[build]
+
+[env]
+  DB_PATH = '/app/data/pk_fronters_widget.db'
+  POLL_INTERVAL = '10'
+  STALE_AFTER = '25'
+  LIMIT = '20'
+  METRICS_PORT = '8000'
+  SENTRY_ENVIRONMENT='production'
+  SENTRY_TRACES_SAMPLE_RATE='0'
+
+[metrics]
+  port = 8000
+  path = "/metrics"
+
+[[mounts]]
+  source = 'widget_data'
+  destination = '/app/data'
+
+[[vm]]
+  memory = '512mb'
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 512
