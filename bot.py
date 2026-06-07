@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import os
 import re
+import json
 import secrets
 from pathlib import Path
 import logging
@@ -75,6 +76,8 @@ class WidgetError(RuntimeError):
     pass
 class IdentityGoneError(WidgetError):
     pass
+class TokenInvalidError(WidgetError):
+    pass
 
 #database stuffs
 DB_PATH = Path(os.environ.get("DB_PATH") or Path(__file__).with_name("pk_fronters_widget.db"))
@@ -143,6 +146,11 @@ def touch_update(discord_id: int):
         "update links set last_update = ? where user_id = ?",
         (now, discord_id),
     )
+    _db.commit()
+
+def defer_update(discord_id: int, seconds: int):
+    future = (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+    _db.execute("update links set last_update = ? where user_id = ?", (future, discord_id))
     _db.commit()
 
 def count_users() -> int:
@@ -315,16 +323,26 @@ async def push_profile(discord_user_id: int, status: FrontStatus) -> None:
     }
     async with aiohttp.ClientSession() as session:
         async with session.patch(url, json=payload, headers=headers) as resp:
+            if resp.status < 400:
+                return
+            body = await resp.text()
+            code = None
+            try:
+                code = json.loads(body).get("code")
+            except (ValueError, AttributeError):
+                pass
             if resp.status == 404:
                 raise IdentityGoneError(f"identity {identity_id} no longer exists")
-            if resp.status >= 400:
-                log.error(await resp.text())
-                raise WidgetError(f"discord API error {resp.status}")
+            if code == 50025:
+                raise TokenInvalidError(f"oauth token invalid for identity {identity_id}")
+            log.error(body)
+            raise WidgetError(f"discord API error {resp.status}")
             
 #background polling
 POLL_INTERVAL = _env_int("POLL_INTERVAL", 10)
 STALE_AFTER = _env_int("STALE_AFTER", 30)
 LIMIT = _env_int("LIMIT", 5)
+TOKEN_RETRY_SECONDS = _env_int("TOKEN_RETRY_SECONDS", 21600)  # 6h
 
 @tasks.loop(seconds=POLL_INTERVAL)
 async def poll_fronts() -> None:
@@ -349,6 +367,10 @@ async def poll_fronts() -> None:
             log.info(f"identity gone for user {user_id}, pruning")
             unlink(user_id)
             PRUNED.inc()
+        except TokenInvalidError:
+            log.info(f"oauth token invalid for user {user_id}, deferring")
+            defer_update(user_id, TOKEN_RETRY_SECONDS)
+            ERRORS.labels("token_invalid").inc()
         except PluralKitError as e:
             log.error(e)
             touch_update(user_id)
